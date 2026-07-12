@@ -10,6 +10,7 @@
 | 版数 | 改訂日 | 改訂者 | 改訂内容 |
 | --- | --- | --- | --- |
 | 1.0 | 2026-07-12 | Claude | 初版作成 |
+| 1.1 | 2026-07-12 | Claude | BD-01改訂（即時配達方式）を反映し、exchangesの状態遷移・deliver_at/delivered_atの意味を更新 |
 
 ## 文書情報
 
@@ -140,8 +141,8 @@ Clerkが管理する認証ユーザーに1:1で対応する、アプリ固有の
 | home_area_label | varchar(20) | NULL | — | 居住エリア表示名（例:「東京都台東区」） |
 | bio | varchar(50) | NULL | — | ひとこと自己紹介 |
 | status | user_status | NOT NULL | 'active' | CD-06 |
-| notify_exchange | boolean | NOT NULL | true | 交換成立通知の受信可否（FR-09） |
-| notify_delivery | boolean | NOT NULL | true | 配達完了通知の受信可否 |
+| notify_exchange | boolean | NOT NULL | true | Phase 1では未使用の予約列。Phase 2で朝夕ウィンドウ配達モード（定期便）を再導入し「交換成立」と「配達」が別の通知に分かれる場合に再利用する（09 通知設計書 §7・§9） |
+| notify_delivery | boolean | NOT NULL | true | 交換成立・配達通知（NT-01）の受信可否。即時配達では非送信、在庫不足からの回復時のみ本設定に従い送信する（FR-09） |
 | notify_reaction | boolean | NOT NULL | true | リアクション通知の受信可否 |
 | age_confirmed_at | timestamptz | NULL | — | 「13歳以上」同意日時（BD-03）。初回設定で記録 |
 | tos_agreed_at | timestamptz | NULL | — | 利用規約同意日時 |
@@ -185,7 +186,7 @@ Clerkが管理する認証ユーザーに1:1で対応する、アプリ固有の
 
 ### TBL-04 exchanges（交換）
 
-1件の投函（trigger_spot）を対価とした1回の交換トランザクション。投函APIで同期的に抽選し、配達はバッチで確定する。
+1件の投函（trigger_spot）を対価とした1回の交換トランザクション。投函API（API-20）で同期的に抽選し、抽選候補があれば同一トランザクション内で配達まで完了する（即時配達。BD-01）。候補が無い場合は `pending` で作成し、非同期の再抽選ジョブ（JOB-02）が配達を確定する。
 
 | カラム | 型 | NULL | 既定値 | 説明 |
 | --- | --- | --- | --- | --- |
@@ -195,8 +196,8 @@ Clerkが管理する認証ユーザーに1:1で対応する、アプリ固有の
 | delivered_spot_id | uuid | NULL | — | 割り当てられたスポット。FK → spots(id)。pending中はNULL |
 | status | exchange_status | NOT NULL | — | CD-03（pending / scheduled / delivered / cancelled） |
 | matched_at | timestamptz | NULL | — | 抽選成立日時 |
-| deliver_at | timestamptz | NULL | — | 配達予定時刻（次の配達ウィンドウ。BD-01） |
-| delivered_at | timestamptz | NULL | — | 配達完了日時 |
+| deliver_at | timestamptz | NULL | — | 配達確定時刻。在庫十分なら投函とほぼ同時、在庫不足なら再抽選成立時に確定する（BD-01）。Phase 1では常に`delivered_at`と同値 |
+| delivered_at | timestamptz | NULL | — | 配達確定時刻（実績）。Phase 1では`deliver_at`と常に同値。Phase 2で距離連動の可変遅延配達（FR-05）を導入した場合、両者は分離し得る |
 | created_at | timestamptz | NOT NULL | now() | 投函受理日時 |
 
 - UNIQUE: `trigger_spot_id`（1投函=1交換）
@@ -206,15 +207,26 @@ Clerkが管理する認証ユーザーに1:1で対応する、アプリ固有の
 
 ```mermaid
 stateDiagram-v2
-    [*] --> scheduled : 投函時に抽選成立
-    [*] --> pending : 候補なし（在庫不足）
-    pending --> scheduled : 再抽選成立（JOB-02）
-    scheduled --> pending : 割当スポットの無効化（JOB-02で差し戻し）
-    scheduled --> delivered : 配達確定（JOB-01・deliver_at到達）
+    %% --- Phase 1（即時配達方式。BD-01）: 主要パス ---
+    [*] --> delivered : 投函時に抽選成立・即時配達（在庫あり）
+    [*] --> pending : 投函時は候補なし（在庫不足）
+    pending --> delivered : 再抽選成立・即時配達確定（JOB-02）
     pending --> cancelled : 受信者の退会
-    scheduled --> cancelled : 受信者の退会
     delivered --> [*]
     cancelled --> [*]
+
+    %% --- 以下はPhase 1では未使用。Phase 2以降で距離連動の可変遅延配達（FR-05）を
+    %% --- 導入する際に、pending/delivered間の中間状態として'scheduled'を使用する想定 ---
+    pending --> scheduled : （Phase 2）再抽選成立・配達待ち
+    scheduled --> pending : （Phase 2）割当スポットの無効化により差し戻し
+    scheduled --> delivered : （Phase 2）deliver_at到達により配達確定
+    scheduled --> cancelled : （Phase 2）受信者の退会
+
+    note right of scheduled
+        Phase 1では実質未使用。
+        Phase 2（距離連動の可変遅延配達）
+        導入時に使用する予約状態。
+    end note
 ```
 
 ### TBL-05 collection_items（もらった場所帳）
@@ -338,9 +350,9 @@ stateDiagram-v2
 
 | コード | 意味 |
 | --- | --- |
-| pending | 抽選候補なし。配達バッチで再抽選 |
-| scheduled | 抽選成立・配達待ち |
-| delivered | 配達完了 |
+| pending | 抽選候補なし（在庫不足）。非同期の再抽選ジョブ（JOB-02）が処理し、成立時は直接delivered化する |
+| scheduled | 抽選成立・配達待ち。**Phase 1では実質未使用**。Phase 2（距離連動の可変遅延配達）向けに予約 |
+| delivered | 配達完了（即時配達、またはJOB-02での再抽選成立時に確定。BD-01） |
 | cancelled | 終端（受信者の退会等により配達しない） |
 
 ### CD-04 通報理由（reports.reason_code）
@@ -399,7 +411,7 @@ stateDiagram-v2
 | IX-01 | spots | `USING gist (geog)` | 近傍検索（Phase 2 距離モード、場所帳地図） |
 | IX-02 | spots | `(status, kind)` | 抽選プール絞り込み |
 | IX-03 | spots | `(author_user_id)` | 自分の投函一覧、退会処理 |
-| IX-04 | exchanges | `(status, deliver_at)` | 配達バッチの対象抽出（JOB-01） |
+| IX-04 | exchanges | `(status, deliver_at)` | pending交換の再抽選対象抽出（JOB-02）。`deliver_at`はPhase 1では即時配達のため実質未使用（Phase 2の距離連動遅延配達で使用想定） |
 | IX-05 | exchanges | UNIQUE `(recipient_user_id, delivered_spot_id) WHERE delivered_spot_id IS NOT NULL` | 再受信防止＋受信済み判定 |
 | IX-06 | exchanges | UNIQUE `(trigger_spot_id)` | 1投函=1交換 |
 | IX-07 | collection_items | `(user_id, delivered_at DESC)` | 場所帳一覧（新着順） |
@@ -415,7 +427,7 @@ stateDiagram-v2
 
 ## 6. 主要クエリ設計
 
-### 6.1 交換抽選（投函API・配達バッチ共通）
+### 6.1 交換抽選（投函API・再抽選ジョブ(JOB-02)共通）
 
 自分の投稿・受信済み・ブロック関係・非公開スポットを除外し、プールからランダムに1件選ぶ（FR-04）。
 
@@ -439,7 +451,8 @@ LIMIT 1;
 ```
 
 - MVP規模では `ORDER BY random()` で十分（02 §6.4）。プールが数十万件を超えたら `TABLESAMPLE SYSTEM_ROWS` または乱数キー列方式へ移行する。
-- 候補0件の場合は `kind = 'seed'` を含めても0件か確認し、それでも0件なら交換を `pending` とし配達バッチで再抽選する（FR-04、FR-10）。※シードスポットは常時 `active` のためプールに含まれる。上記クエリはシードも通常投稿も区別しない。
+- 候補が見つかった場合、投函API（API-20）は同一トランザクション内で `collection_items` へのスナップショット生成・`exchanges.status='delivered'`・`deliver_at=delivered_at=now()` までを完了させる（即時配達。BD-01）。
+- 候補0件の場合は `kind = 'seed'` を含めても0件か確認し、それでも0件なら交換を `pending` とし、在庫不足時の再抽選ジョブ（JOB-02。08 バッチ設計書）で再抽選する（FR-04、FR-10）。※シードスポットは常時 `active` のためプールに含まれる。上記クエリはシードも通常投稿も区別しない。
 - Phase 2（距離モード）は本クエリに `ST_DWithin(s.geog, :point, :radius)` を追加する。
 
 ### 6.2 場所帳の地図表示（bbox検索）

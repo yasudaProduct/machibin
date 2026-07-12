@@ -10,6 +10,7 @@
 | 版数 | 改訂日 | 改訂者 | 改訂内容 |
 | --- | --- | --- | --- |
 | 1.0 | 2026-07-12 | Claude | 初版作成 |
+| 1.1 | 2026-07-12 | Claude | BD-01改訂(即時配達方式)を反映し、API-20/API-30のレスポンス仕様を更新 |
 
 ## 文書情報
 
@@ -133,7 +134,7 @@ Clerkのイベント（`user.created` / `user.deleted`）を受信する。Svix�
   "homeArea": { "code": "13106", "label": "東京都台東区" },
   "bio": "散歩が好きです",
   "onboardingCompleted": true,
-  "notificationSettings": { "exchange": true, "delivery": true, "reaction": true },
+  "notificationSettings": { "delivery": true, "reaction": true },
   "visitedCount": 12
 }
 ```
@@ -173,8 +174,10 @@ Clerkのイベント（`user.created` / `user.deleted`）を受信する。Svix�
 
 ```json
 // リクエスト
-{ "exchange": true, "delivery": true, "reaction": false }
+{ "delivery": true, "reaction": false }
 ```
+
+- `delivery`は統合後のNT-01（交換成立・配達通知）の受信可否（`profiles.notify_delivery`）。`exchange`フィールドはPhase 1では受け付けない（`notify_exchange`列はPhase 2の朝夕ウィンドウ配達モード復活時に再利用するための予約列。06 §TBL-01、09 §7）。
 
 ### API-14 POST /me/push-tokens
 
@@ -219,18 +222,31 @@ Clerkのイベント（`user.created` / `user.deleted`）を受信する。Svix�
 | idempotencyKey | 任意。同一キーの再送は初回結果を返す（通信リトライでの二重投函防止） |
 
 ```json
-// 201
+// 201（在庫十分。抽選成立し同一トランザクション内で配達まで完了）
 {
   "spot": { "id": "uuid", "name": "喫茶ロマン", "categoryCode": "cafe" },
   "exchange": {
     "id": "uuid",
-    "status": "scheduled",
-    "deliverAt": "2026-07-12T22:00:00Z"
+    "status": "delivered",
+    "deliveredAt": "2026-07-12T10:00:08Z"
+  },
+  "collectionItemId": "uuid"
+}
+```
+
+```json
+// 201（在庫不足。抽選候補0件）
+{
+  "spot": { "id": "uuid", "name": "喫茶ロマン", "categoryCode": "cafe" },
+  "exchange": {
+    "id": "uuid",
+    "status": "pending"
   }
 }
 ```
 
-- 抽選候補が0件の場合も201で受理し、`exchange.status = "pending"` を返す（配達バッチで再抽選。CD-03）。
+- 交換抽選で候補が見つかった場合、API-20と同一トランザクション内で場所帳スナップショット生成（`collection_items`）まで完了させ、`exchange.status = "delivered"` ・配達時刻 `deliveredAt`（投函から数秒後）を返す。`collectionItemId` は生成された場所帳アイテムのIDで、SCR-04が数秒の演出後にSCR-05へ遷移する際に用いる。
+- 抽選候補が0件の場合も201で受理し、`exchange.status = "pending"` を返す（在庫不足時のみ非同期の再抽選ジョブが処理する。08 バッチ設計書）。
 - 1日の投函上限（PRM-05）超過時は `422 POST_LIMIT_EXCEEDED`。
 
 ### API-21 GET /me/spots
@@ -261,7 +277,7 @@ Clerkのイベント（`user.created` / `user.deleted`）を受信する。Svix�
 // 200
 {
   "pendingDeliveries": [
-    { "exchangeId": "uuid", "status": "scheduled", "deliverAt": "2026-07-12T22:00:00Z" }
+    { "exchangeId": "uuid", "status": "pending" }
   ],
   "recentItems": [
     { "collectionItemId": "uuid", "spotName": "夕焼けだんだん", "deliveredAt": "2026-07-11T22:00:12Z", "hasReaction": false }
@@ -270,6 +286,9 @@ Clerkのイベント（`user.created` / `user.deleted`）を受信する。Svix�
   "todayPostLimit": 5
 }
 ```
+
+- 即時配達方式（BD-01）では、投函時に抽選候補があればAPI-20の時点で`delivered`まで完了するため、`pendingDeliveries[]`に残るのは基本的に在庫不足で`status = "pending"`のまま保留されている交換のみとなる。
+- `deliverAt`のような確定配達予定時刻のフィールドは、Phase 1では非同期の再抽選ジョブの成立タイミング依存であり事前確定できないため、実質的に使用しない見込みである。
 
 ### API-40 GET /collection
 
