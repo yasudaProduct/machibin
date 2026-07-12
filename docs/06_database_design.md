@@ -207,8 +207,8 @@ Clerkが管理する認証ユーザーに1:1で対応する、アプリ固有の
 stateDiagram-v2
     [*] --> scheduled : 投函時に抽選成立
     [*] --> pending : 候補なし（在庫不足）
-    pending --> scheduled : 配達バッチで再抽選成立
-    scheduled --> delivered : 配達バッチ（deliver_at到達）
+    pending --> scheduled : 再抽選成立（JOB-02）
+    scheduled --> delivered : 配達確定（JOB-01・deliver_at到達）
     delivered --> [*]
 ```
 
@@ -292,7 +292,7 @@ stateDiagram-v2
 | id | uuid | NOT NULL | gen_random_uuid() | PK |
 | user_id | uuid | NOT NULL | — | FK → profiles(id) ON DELETE CASCADE |
 | type | varchar(10) | NOT NULL | — | NT-01〜03（09 通知設計書） |
-| exchange_id | uuid | NULL | — | 関連交換 |
+| exchange_id | uuid | NULL | — | 関連交換（NT-03はリアクション対象の交換を記録。リアクション・スポットはexchange経由で解決） |
 | expo_ticket_id | text | NULL | — | Expo Pushチケット |
 | status | varchar(10) | NOT NULL | 'sent' | sent / ok / error |
 | error_detail | text | NULL | — | レシートのエラー内容 |
