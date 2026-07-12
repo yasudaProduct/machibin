@@ -56,7 +56,7 @@ flowchart TB
     API --> Neon
     API -->|JWT検証 / Webhook| Clerk
     API --> Expo
-    Clerk -->|OTPメール| Resend
+    API -.将来のメール送信.-> Resend
     Expo -->|APNs / FCM| User
 ```
 
@@ -67,7 +67,7 @@ flowchart TB
 | Clerk | 双方向 | 認証UI・トークン発行（アプリ）、JWT検証・ユーザー削除・Webhook受信（API） |
 | Neon | → | 全永続データの読み書き（HTTPドライバ） |
 | Expo Push | → | プッシュ通知の配信依頼 |
-| Resend | ← Clerk | 認証OTPメールの送信（ClerkのカスタムSMTP/メール連携として利用） |
+| Resend | → | 将来のトランザクションメール送信用に予約（Phase 1の認証OTPメールはClerkが直接送信するため、Resendの出番は限定的） |
 | ストア | → | アプリ配信、EAS UpdateによるOTA更新 |
 
 ---
@@ -145,7 +145,7 @@ flowchart TB
 | Cloudflare | Rate Limiting ルール | — | 07 §1.5の制限値 |
 | Neon | プロジェクト | `machibin` | 本番=mainブランチ。PostGIS拡張有効化 |
 | Clerk | アプリケーション | `machibin` | Development/Productionの2インスタンス |
-| Resend | ドメイン | `machibin.app`（仮） | 認証メール等の送信元（SPF/DKIM設定） |
+| Resend | ドメイン | `machibin.app`（仮） | 将来のトランザクションメール送信元（SPF/DKIM設定）。Phase 1ではOTPメールをClerkが直接送信 |
 | Expo | EASプロジェクト | `machibin` | ビルド・ストア申請・OTA更新・Push |
 | Sentry | プロジェクト2種 | `machibin-app` / `machibin-api` | クラッシュ・例外収集 |
 | GitHub | リポジトリ | `yasudaProduct/machibin` | ソース管理・GitHub Actions |

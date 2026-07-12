@@ -94,7 +94,7 @@
 | API-14 | POST | /me/push-tokens | プッシュトークン登録 | user | FR-09 |
 | API-15 | DELETE | /me/push-tokens | プッシュトークン削除（ログアウト時） | user | FR-09 |
 | API-20 | POST | /spots | スポット投函＋交換抽選 | user | FR-03, FR-04 |
-| API-21 | GET | /me/spots | 自分の投函一覧（visited累計含む） | user | FR-07 |
+| API-21 | GET | /me/spots | 自分の投函一覧（visited累計はAPI-10で取得） | user | FR-07 |
 | API-30 | GET | /home | ホーム画面サマリ | user | FR-05 |
 | API-40 | GET | /collection | 場所帳一覧（リスト/地図bbox） | user | FR-07 |
 | API-41 | GET | /collection/{id} | 場所帳アイテム詳細 | user | FR-05, FR-07 |
@@ -298,6 +298,7 @@ Clerkのイベント（`user.created` / `user.deleted`）を受信する。Svix�
 // 200
 {
   "id": "uuid",
+  "spotId": "uuid",
   "spotName": "夕焼けだんだん",
   "location": { "latitude": 35.727, "longitude": 139.767 },
   "categoryCode": "scenery",
@@ -311,6 +312,7 @@ Clerkのイベント（`user.created` / `user.deleted`）を受信する。Svix�
 ```
 
 - `senderAreaLabel` は市区町村レベルのみ（NFR-PR02）。差出人のニックネーム等は返さない。
+- `spotId` は原本スポットへの参照で、通報（API-50）の `targetId` に使用する。原本が削除済みの場合はnull。`reportable` は原本が存在し通報可能な場合のみtrue（falseの場合、画面は通報導線を出さない）。
 
 ### API-42 PATCH /collection/{id}
 
@@ -334,6 +336,7 @@ Clerkのイベント（`user.created` / `user.deleted`）を受信する。Svix�
 | reportComment | `visited` のときのみ許可。200文字以内（PRM-07）。任意 |
 
 - 同一typeの重複は `409 ALREADY_REACTED`。
+- リアクションの取り消しAPIは提供しない（Phase 1の意図的な仕様。04 §4.6。画面側は付与前に確認を挟む）。
 - 付与後、投稿者（原本が存在し、通知許可がある場合のみ）へNT-03通知（09 通知設計書）。
 
 ### API-50 POST /reports
@@ -344,9 +347,13 @@ Clerkのイベント（`user.created` / `user.deleted`）を受信する。Svix�
   "targetType": "spot",
   "targetId": "uuid",
   "reasonCode": "inappropriate_content",
-  "detail": "コメントに個人宅の住所らしき記載があります。"
+  "detail": "コメントに個人宅の住所らしき記載があります。",
+  "turnstileToken": "XXXX.DUMMY.TOKEN"
 }
 ```
+
+- `targetId` は、spot通報の場合は原本スポットID（API-41の `spotId`）、user通報の場合は対象ユーザーID。
+- `turnstileToken` はTurnstile検証必須（NFR-S03。API-20と同様）。
 
 処理（04 機能設計書 §3.8）:
 1. `reports` 登録（spot通報時は投稿者を `target_user_id` に解決）。
@@ -372,7 +379,7 @@ Clerkのイベント（`user.created` / `user.deleted`）を受信する。Svix�
 ```
 
 - `kind='seed'` で登録。通常投稿と同一のバリデーション（コメント最低文字数・座標丸め）を適用する（FR-10）。
-- `senderAreaLabel` はシード配達時の差出人エリア表示に使用（運営が地域を設定）。※実装は `app_settings` またはシード専用の付帯情報として保持。
+- `senderAreaLabel` はシード配達時の差出人エリア表示に使用（運営が地域を設定）。`spots.seed_area_label`（TBL-03）に保存し、配達スナップショット生成時に `collection_items.sender_area_label` へ複製する。
 
 ### API-61 GET /admin/reports
 
@@ -404,7 +411,7 @@ Clerkのイベント（`user.created` / `user.deleted`）を受信する。Svix�
 | --- | --- |
 | 未認証 | API-01、API-02（署名検証あり）のみ |
 | user（active） | API-10〜API-50。自分のリソースのみ（他人のIDを指定しても404） |
-| user（suspended） | API-10・API-12のみ許可。API-20等は403 ACCOUNT_SUSPENDED |
+| user（suspended） | API-10・API-12・API-15（ログアウト時のトークン削除）のみ許可。API-20等は403 ACCOUNT_SUSPENDED |
 | admin | userの全操作＋API-60〜64 |
 
 ---

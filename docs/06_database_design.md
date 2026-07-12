@@ -178,6 +178,7 @@ Clerkが管理する認証ユーザーに1:1で対応する、アプリ固有の
 | category_code | varchar(20) | NOT NULL | — | CD-01 |
 | comment | varchar(300) | NOT NULL | — | おすすめコメント。最低文字数はPRM-01（既定: 全角20文字） |
 | kind | spot_kind | NOT NULL | 'normal' | CD-08（normal / seed）。FR-10 |
+| seed_area_label | varchar(20) | NULL | — | シード投入時に指定する差出人エリア表示名（kind='seed'のみ使用。API-60）。配達スナップショットのsender_area_labelに複製される |
 | status | spot_status | NOT NULL | 'active' | CD-02。hidden=運営非表示、deleted=削除 |
 | created_at | timestamptz | NOT NULL | now() | |
 | updated_at | timestamptz | NOT NULL | now() | |
@@ -192,7 +193,7 @@ Clerkが管理する認証ユーザーに1:1で対応する、アプリ固有の
 | recipient_user_id | uuid | NOT NULL | — | 受信者（=投函者）。FK → profiles(id) |
 | trigger_spot_id | uuid | NOT NULL | — | 対価として投函されたスポット。FK → spots(id)。UNIQUE |
 | delivered_spot_id | uuid | NULL | — | 割り当てられたスポット。FK → spots(id)。pending中はNULL |
-| status | exchange_status | NOT NULL | — | CD-03（pending / scheduled / delivered） |
+| status | exchange_status | NOT NULL | — | CD-03（pending / scheduled / delivered / cancelled） |
 | matched_at | timestamptz | NULL | — | 抽選成立日時 |
 | deliver_at | timestamptz | NULL | — | 配達予定時刻（次の配達ウィンドウ。BD-01） |
 | delivered_at | timestamptz | NULL | — | 配達完了日時 |
@@ -208,8 +209,12 @@ stateDiagram-v2
     [*] --> scheduled : 投函時に抽選成立
     [*] --> pending : 候補なし（在庫不足）
     pending --> scheduled : 再抽選成立（JOB-02）
+    scheduled --> pending : 割当スポットの無効化（JOB-02で差し戻し）
     scheduled --> delivered : 配達確定（JOB-01・deliver_at到達）
+    pending --> cancelled : 受信者の退会
+    scheduled --> cancelled : 受信者の退会
     delivered --> [*]
+    cancelled --> [*]
 ```
 
 ### TBL-05 collection_items（もらった場所帳）
@@ -336,6 +341,7 @@ stateDiagram-v2
 | pending | 抽選候補なし。配達バッチで再抽選 |
 | scheduled | 抽選成立・配達待ち |
 | delivered | 配達完了 |
+| cancelled | 終端（受信者の退会等により配達しない） |
 
 ### CD-04 通報理由（reports.reason_code）
 
@@ -360,7 +366,7 @@ stateDiagram-v2
 | コード | 意味 |
 | --- | --- |
 | active | 有効 |
-| suspended | 停止（運営処分。ログイン可・投函/交換不可） |
+| suspended | 停止（運営処分。プロフィール閲覧・トークン削除・退会のみ可。04 §5 G-04） |
 | withdrawn | 退会 |
 
 ### CD-07 リアクション種別（reaction_type）
@@ -466,10 +472,11 @@ WHERE s.author_user_id = :user_id
 | --- | --- |
 | profiles | nickname・bio・home_area_*をNULL化し `status='withdrawn'`、`withdrawn_at` 設定。clerk_user_idは削除完了後に `deleted:<元ID>` 形式へ置換 |
 | spots（本人投稿） | `status='deleted'`（プールから除外）、`author_user_id` をNULL化 |
-| exchanges（未配達） | pending/scheduledは配達対象から除外（受信者本人の退会のため） |
+| exchanges（未配達） | pending/scheduledの交換は `cancelled` へ更新（終端。CD-03） |
 | collection_items（本人所有） | 物理削除（CASCADE） |
 | collection_items（他者所有・本人投稿由来） | スナップショットのためそのまま残置（差出人参照を持たない） |
 | device_tokens / notification_logs | 物理削除（CASCADE） |
+| reactions（本人が付与） | 残置（匿名化済みプロフィールを参照したまま保持。受信・交換記録の一部として扱う） |
 | reports / blocks | 保全のため残置（不正対策の履歴として保持。11 プライバシー設計書 §5） |
 
 ### 7.2 保持期間（TTL）
