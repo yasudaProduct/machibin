@@ -11,6 +11,7 @@
 | --- | --- | --- | --- |
 | 1.0 | 2026-07-12 | Claude | 初版作成 |
 | 1.1 | 2026-07-12 | Claude | BD-02改訂によりメールOTPを廃止しGoogleソーシャルログインのみへ変更。Sign in with Apple併設義務（iOS）をリスクとして明記。BD-08未成年者の保護者同意論点を追加 |
+| 1.2 | 2026-07-12 | Claude | BD-02再改訂によりAppleソーシャルログインを追加し、Phase 1の認証手段をGoogle・Appleの2択に変更。旧RISK-05（Sign in with Apple未対応）を解消 |
 
 ## 文書情報
 
@@ -41,9 +42,9 @@
 | 用語 | 定義 |
 | --- | --- |
 | セッショントークン | Clerkが発行する短命のJWT（既定の有効期間60秒）。APIコール時に`Authorization`ヘッダーへ付与する。`@clerk/expo`が自動更新する |
-| OTP | One-Time Password。メールで送付される確認コード。**Phase 1では不使用**（BD-02改訂によりメールOTP認証は廃止し、Googleソーシャルログインのみを採用。旧版1.0時点の唯一の認証手段だった） |
-| Google OAuth（ソーシャルログイン） | Googleアカウントの認証情報を用いてClerk経由でサインアップ／サインインする方式。Phase 1唯一の認証手段（BD-02） |
-| Sign in with Apple | AppleのソーシャルログインAPI。Phase 1では未実装だが、iOSでGoogleソーシャルログインを提供する以上、App Store審査ガイドライン4.8により併設が必須となる既知の要対応事項（§11 RISK-05、§12） |
+| OTP | One-Time Password。メールで送付される確認コード。**Phase 1では不使用**（BD-02改訂によりメールOTP認証は廃止し、ソーシャルログインのみを採用。旧版1.0時点の唯一の認証手段だった） |
+| Google OAuth（ソーシャルログイン） | Googleアカウントの認証情報を用いてClerk経由でサインアップ／サインインする方式。Phase 1で採用する2つの認証手段の1つ（BD-02） |
+| Sign in with Apple | Appleアカウントの認証情報を用いてClerk経由でサインアップ／サインインする方式。Phase 1で採用する2つの認証手段の1つ（BD-02再改訂）。Googleのようなシステムブラウザ経由のOAuthではなく、iOSネイティブのAuthenticationServicesフレームワーク（`ASAuthorizationController`）で完結する点が異なる（§3.2）。Androidでは同フレームワークが利用できないため、Web版OAuthフローにフォールバックする（§3.2） |
 | JWKS | JSON Web Key Set。セッショントークンの署名検証に用いる公開鍵セット。ClerkのFrontend APIが公開する |
 | MRU | Monthly Returning Users（月間復帰ユーザー）。Clerkの課金単位（02 §3.2） |
 | Svix | ClerkがWebhook配信に利用する基盤。`svix-id`等の署名ヘッダーを付与する |
@@ -56,7 +57,7 @@
 
 ### 2.1 構成
 
-認証情報（Googleプロフィールから取得したメールアドレス・Google連携情報・セッション）は**Clerkのみが保持**し、自社DB（Neon）には一切持たない。DB側はClerkが払い出す`clerk_user_id`を`profiles`（TBL-01）に持つのみである。これによりNFR-S02（認証情報の保護）を、ハッシュ化等の自前実装なしに満たす（02 §7）。この方針はBD-02（認証手段のGoogleソーシャルログインへの変更）の前後で変わらない。
+認証情報（Google／Appleいずれかのプロフィールから取得したメールアドレス・OAuth連携情報・セッション）は**Clerkのみが保持**し、自社DB（Neon）には一切持たない。DB側はClerkが払い出す`clerk_user_id`を`profiles`（TBL-01）に持つのみである。これによりNFR-S02（認証情報の保護）を、ハッシュ化等の自前実装なしに満たす（02 §7）。この方針はBD-02（認証手段をGoogle・Appleのソーシャルログインとする変更）の前後で変わらない。
 
 ```mermaid
 flowchart LR
@@ -86,19 +87,22 @@ flowchart LR
 | 層 | 責務 |
 | --- | --- |
 | `@clerk/expo`（アプリ） | サインアップ／サインインUI、セッショントークンの保持・自動更新。トークンは`expo-secure-store`（iOS Keychain / Android Keystore）で暗号化保存する |
-| Clerk | 認証情報の保管、Google OAuth連携によるサインアップ／サインイン処理、セッション管理、トークン発行・ローテーション、不正ログイン検知、Botサインアップ抑止 |
+| Clerk | 認証情報の保管、Google／Apple OAuth連携によるサインアップ／サインイン処理、セッション管理、トークン発行・ローテーション、不正ログイン検知、Botサインアップ抑止 |
 | Workers（API） | セッショントークンの検証（§5）、`profiles`解決、ロール・ステータスに基づく認可（§7）、Webhook署名検証（§8） |
 | Neon | アプリ固有データの保持。認証に関しては`profiles.clerk_user_id`と`status`のみが関与する |
 
 ### 2.3 Phase 1の認証手段（BD-02）
 
-- **Googleソーシャルログインのみ**とする。ClerkダッシュボードでGoogle OAuthのみを有効化する（OAuthクライアントの発行元はGoogle Cloud Console。Clerk側に認証情報を登録する）。
-- サインアップ・サインインは「Googleでログイン」ボタン1つで完結する。パスワード入力欄・メールOTP確認コード入力欄は画面上に一切存在しない。
+- **Google・Appleの2つのソーシャルログイン**とする。Clerkダッシュボードで**Google OAuthとApple OAuthの両方**を有効化する。
+  - Google: OAuthクライアントの発行元はGoogle Cloud Console。Clerk側に認証情報を登録する。
+  - Apple: Apple Developer Programにて、Sign in with Apple用の**App ID設定（Capability有効化）とServices IDの発行**、および認証キーの作成が必要。発行した認証情報をClerk側に登録する。
+- サインアップ・サインインは「**Googleでログイン**」「**Appleでログイン**」の**2つのボタン**で完結する。パスワード入力欄・メールOTP確認コード入力欄は画面上に一切存在しない。
 - **パスワード・メールOTP・マジックリンク・パスキーはPhase 1では提供しない**（旧版1.0はメールOTPのみを前提としていたが、BD-02改訂により全面的に置き換える。将来の拡張は§12）。
-- 登録時、ClerkはGoogleプロフィールからメールアドレスを取得して保持する。取得した認証情報は引き続き**Clerkのみが保持**し、Neonには一切保存しない（NFR-S02。§2.1の既存方針は変更なし）。氏名・アバター画像等のGoogleプロフィール情報も、アプリのプロフィール（`profiles`）へは転記しない（ニックネーム等はSCR-10でユーザーが別途入力する。匿名志向の方針・02 §3.2と整合）。
+- 登録時、Clerkはユーザーが選択したプロバイダ（Google／Apple）のプロフィールからメールアドレスを取得して保持する。取得した認証情報は引き続き**Clerkのみが保持**し、Neonには一切保存しない（NFR-S02。§2.1の既存方針は変更なし）。氏名・アバター画像等のプロフィール情報も、アプリのプロフィール（`profiles`）へは転記しない（ニックネーム等はSCR-10でユーザーが別途入力する。匿名志向の方針・02 §3.2と整合）。
 - 収集する情報がメールアドレスのみである点は変わらないため、要件（FR-01「最小限の情報」）との整合も維持される。
+- **Appleのプライバシー機能に関する注記。** Appleは「メールを非公開」オプションを提供しており、ユーザーがこれを選択した場合、実在のメールアドレスの代わりに**プライベートリレーアドレス**（`@privaterelay.appleid.com`形式）がClerkへ渡される。まちびんはメールアドレスを認証目的以外に用いないため、この場合も動作に支障はない。また、Appleは氏名情報を**初回の認可時にのみ**返却し、以降の再ログインでは返却しない仕様のため、Clerkは初回取得時の情報を内部で保持する。まちびんはニックネームをSCR-10で別途入力させる方針のため、この氏名情報自体は利用しない。
 
-> **既知の要対応事項（iOS／App Store審査 4.8）:** サードパーティのソーシャルログイン（Google）をiOSアプリで提供する場合、App Store審査ガイドライン**4.8 Login Services**により、**Sign in with Appleを同等の位置づけで併設することが必須**となる。本文書ではPhase 1のスコープを「Googleのみ」で確定するが、これは**未実装のまま据え置いてよいという判断ではなく、iOS版のストア申請前に必ず対応しなければならない既知のブロッカー**である。詳細は§11 RISK-05・§12を参照。
+> **iOS審査対応（App Store審査ガイドライン4.8 Login Services）:** サードパーティのソーシャルログインをiOSアプリで提供する場合、同ガイドラインによりSign in with Appleの併設が求められるところ、**Phase 1からGoogleに加えてAppleログインを提供することで、この要件に対応する**（旧版1.1でRISK-05として記録していた未対応課題は、本改訂により解消。§11）。対応にあたっては、**iOSでは「Googleでログイン」「Appleでログイン」の両ボタンを同等以上の視認性・操作性で提供する必要がある**点に留意する（05 画面設計書 SCR-01）。
 
 ---
 
@@ -112,18 +116,18 @@ sequenceDiagram
     actor U as ユーザー
     participant App as アプリ（@clerk/expo）
     participant Clerk as Clerk
-    participant Google as Google（OAuth認可サーバー）
+    participant Provider as Google／Apple<br/>（選択した側の認可サーバー）
     participant API as Workers/Hono
     participant DB as Neon
 
-    U->>App: 「Googleでログイン」ボタン押下（SCR-01）
-    App->>Clerk: OAuthサインアップ / サインイン開始（strategy: oauth_google）
-    Clerk->>Google: システムブラウザ（ASWebAuthenticationSession / Custom Tabs）へ<br/>認可リクエストをリダイレクト
-    Google-->>U: Googleアカウント選択・認証・同意画面を表示
-    U->>Google: アカウント選択・認証・同意
-    Google-->>Clerk: 認可コードを登録済みリダイレクトURIへリダイレクト
-    Clerk->>Google: 認可コード→トークン交換（サーバー間通信）
-    Google-->>Clerk: アクセストークン・IDトークン・プロフィール（メールアドレス等）
+    U->>App: 「Googleでログイン」「Appleでログイン」<br/>いずれかのボタンを選択（SCR-01）
+    App->>Clerk: OAuthサインアップ / サインイン開始<br/>（strategy: oauth_google または oauth_apple）
+    Clerk->>Provider: 選択したプロバイダの認可フローを開始<br/>（既定はシステムブラウザ経由のOAuth。<br/>iOSのAppleのみ挙動が異なる。下記Note参照）
+    Provider-->>U: アカウント選択・認証・同意画面を表示<br/>（Appleは初回認可時のみ氏名共有の可否も確認）
+    U->>Provider: アカウント選択・認証・同意
+    Provider-->>Clerk: 認可コードを登録済みリダイレクトURIへリダイレクト<br/>（iOSのAppleネイティブ経路はコールバックで直接返却）
+    Clerk->>Provider: 認可コード→トークン交換（サーバー間通信）
+    Provider-->>Clerk: アクセストークン・IDトークン・プロフィール（メールアドレス等）
     Clerk-->>App: アプリへリダイレクトし<br/>セッション確立・セッショントークン発行<br/>（expo-secure-storeへ保存）
     par 新規登録時のみ（非同期）
         Clerk->>API: Webhook user.created（API-02）
@@ -134,15 +138,20 @@ sequenceDiagram
     U->>App: SCR-10 初回プロフィール設定<br/>（ニックネーム・「13歳以上」同意・規約同意）
     App->>API: PATCH /me（API-11）
     API->>DB: nickname等の保存＋age_confirmed_at / tos_agreed_at 記録
+
+    Note over App,Provider: Appleの場合、iOSでは上記と異なりネイティブ実装で完結する等の相違点がある。<br/>詳細は§3.2-2を参照
 ```
 
 ### 3.2 補足事項
 
-1. **新規・既存の判定はClerk側で行う。** 既存ユーザーのサインインも同一のUIフロー（「Googleでログイン」→Google側での認証・同意→Clerkセッション確立）であり、アプリは両者を区別する実装を持たない。既存ユーザーの場合、図中の`user.created` Webhookと初回設定（SCR-10）はスキップされる。同一Googleアカウントでの再ログインは、Clerk側でGoogleの外部アカウントIDに紐づく既存のClerkユーザーへ解決される。
-2. **Google認証・同意はアプリ外のシステムブラウザセッションで行う。** `@clerk/expo`のOAuthフロー（`useOAuth`等。`strategy: 'oauth_google'`）が端末のシステムブラウザ（iOS: `ASWebAuthenticationSession`、Android: Custom Tabs）を起動してGoogleの認証・同意画面へ遷移する。同意完了後、事前にGoogle Cloud Console／Clerkへ登録済みのリダイレクトURI（カスタムスキーム）でアプリへ復帰し、Clerkがセッションを確立する。**アプリ自身がGoogleのパスワード等の認証情報を扱うことは一切ない。**
-3. **ユーザーがGoogle側で同意をキャンセル・拒否した場合、あるいはブラウザセッションが失敗した場合。** アプリはSCR-01へ留まり、サインアップ／サインインが未完了である旨を案内する（自動リトライはしない。ユーザーが再度ボタンを押下する）。
-4. **年齢確認（BD-03）はClerkの機能・Googleプロフィールのいずれにも依存しない。** 生年月日はGoogleプロフィールからも取得・収集せず、初回プロフィール設定（SCR-10）での「13歳以上」同意チェックを`profiles.age_confirmed_at`に記録する。API-10の`onboardingCompleted`が`false`の間、アプリは初回設定画面から先へ進ませない。
-5. **Webhook到達遅延への備え（レース対策）。** `user.created` Webhookは非同期であり、アプリの初回APIコール（API-10）が先着し得る。トークン検証後に`profiles`が未作成の場合、APIは**オンデマンドで空レコードを作成**する（`clerk_user_id`のUNIQUE制約＋`ON CONFLICT DO NOTHING`でWebhookとの二重作成を防止）。これにより`profiles`作成の一次経路はWebhook、二次経路はオンデマンド作成の二重化となる。
+1. **新規・既存の判定はClerk側で行う。** 既存ユーザーのサインインも同一のUIフロー（「Googleでログイン」または「Appleでログイン」→選択したプロバイダ側での認証・同意→Clerkセッション確立）であり、アプリは両者を区別する実装を持たない。既存ユーザーの場合、図中の`user.created` Webhookと初回設定（SCR-10）はスキップされる。同一のGoogleまたはAppleアカウントでの再ログインは、Clerk側でそのプロバイダの外部アカウントIDに紐づく既存のClerkユーザーへ解決される。
+2. **プロバイダ認証・同意はアプリ外の認可フローで行う（Apple／iOSは例外）。** `@clerk/expo`のOAuthフロー（`useOAuth`等。`strategy: 'oauth_google'`または`'oauth_apple'`）が、既定では端末のシステムブラウザ（iOS: `ASWebAuthenticationSession`、Android: Custom Tabs）を起動してプロバイダの認証・同意画面へ遷移する。同意完了後、事前にプロバイダ／Clerkへ登録済みのリダイレクトURI（カスタムスキーム）でアプリへ復帰し、Clerkがセッションを確立する。**アプリ自身がGoogle・Appleいずれのパスワード等の認証情報を扱うことは一切ない。** ただしAppleのみ、プラットフォームにより経路が分岐する。
+   - **iOS:** システムブラウザ経由のOAuthではなく、**ネイティブのAuthenticationServices（`ASAuthorizationController`）**で完結する。ブラウザ遷移を伴わないため、Googleより認証体験（画面遷移・待ち時間）が短い。
+   - **Android:** ネイティブの Sign in with Apple SDK が存在しないため、Googleと同様に**Clerkが提供する汎用OAuth Webフロー**（システムブラウザ経由）にフォールバックする。
+   - **氏名情報の扱い:** Appleは氏名情報を**初回の認可時にのみ**返却し、以降の再ログインでは返却しない。Clerkは初回取得時の情報を内部に保持することでこれに対応する。まちびんはニックネームをSCR-10で別途入力させる方針のため、この氏名情報自体は利用しない（§2.3）。
+3. **ユーザーがプロバイダ側で同意をキャンセル・拒否した場合、あるいは認可フローが失敗した場合。** アプリはSCR-01へ留まり、サインアップ／サインインが未完了である旨を案内する（自動リトライはしない。ユーザーが再度いずれかのボタンを押下する）。
+4. **年齢確認（BD-03）はClerkの機能・プロバイダのプロフィールのいずれにも依存しない。** 生年月日はGoogle・Appleいずれのプロフィールからも取得・収集せず、初回プロフィール設定（SCR-10）での「13歳以上」同意チェックを`profiles.age_confirmed_at`に記録する。API-10の`onboardingCompleted`が`false`の間、アプリは初回設定画面から先へ進ませない。
+5. **Webhook到達遅延への備え（レース対策）。** `user.created` Webhookは非同期であり、アプリの初回APIコール（API-10）が先着し得る。トークン検証後に`profiles`が未作成の場合、APIは**オンデマンドで空レコードを作成**する（`clerk_user_id`のUNIQUE制約＋`ON CONFLICT DO NOTHING`でWebhookとの二重作成を防止）。これにより`profiles`作成の一次経路はWebhook、二次経路はオンデマンド作成の二重化となる。この挙動はGoogle・Appleいずれのサインアップでも共通である。
 
 ### 3.3 未成年者の保護者同意に関する論点（BD-08）
 
@@ -350,7 +359,7 @@ ClerkのWebhook（`user.created` / `user.deleted`）はSvix経由で配信され
 | 全APIの流量 | **Cloudflare Rate Limiting / WAF**（07 §1.5の制限値） | 連投・ブルートフォース・DoS |
 | アプリケーション | 1日の投函上限（PRM-05）・コメント最低文字数（PRM-01） | 低品質投稿の量産 |
 
-- **パスワード・OTPへの総当たり攻撃は認証手段から存在自体が排除される。** Phase 1の認証はGoogleソーシャルログインのみであり（BD-02）、アプリ・Clerkのいずれもパスワードや確認コードといった「推測・総当たり可能な秘密情報」を保持しないため、この種の攻撃は成立しない。サインアップの自動化（Bot大量作成）に対する対策はClerkのbot protectionに委ねる（上表）。
+- **パスワード・OTPへの総当たり攻撃は認証手段から存在自体が排除される。** Phase 1の認証はGoogle・Appleのソーシャルログインのみであり（BD-02）、アプリ・Clerkのいずれもパスワードや確認コードといった「推測・総当たり可能な秘密情報」を保持しないため、この種の攻撃は成立しない。サインアップの自動化（Bot大量作成）に対する対策はClerkのbot protectionに委ねる（上表）。
 - Turnstileはユーザー操作を起点とするAPIのみに課し、認証済みの読み取り系API（API-30・API-40等）には課さない（Rate Limitingで足りる）。
 
 ---
@@ -387,11 +396,11 @@ ClerkのWebhook（`user.created` / `user.deleted`）はSvix経由で配信され
 
 | No | リスク | 影響 | 対策 |
 | --- | --- | --- | --- |
-| RISK-01 | Clerk障害（02 AR-08） | サインイン（Google OAuth連携含む）が不可。セッショントークンは60秒毎の更新をClerkに依存するため、**既存ユーザーのAPI利用も概ね1分以内に不可**となり、サービス全体が実質停止する | Clerkステータスページの監視（NFR-O04）、アプリ内の障害案内文言の準備。JWKSキャッシュにより検証自体は継続可（§5.2）。トークン有効期間の延長やキャッシュ済みセッションの一時許容は、失効の即時性とのトレードオフのためPhase 1では導入せず、02 AR-08の検討事項として残す |
+| RISK-01 | Clerk障害（02 AR-08） | サインイン（Google／Apple OAuth連携含む）が不可。セッショントークンは60秒毎の更新をClerkに依存するため、**既存ユーザーのAPI利用も概ね1分以内に不可**となり、サービス全体が実質停止する | Clerkステータスページの監視（NFR-O04）、アプリ内の障害案内文言の準備。JWKSキャッシュにより検証自体は継続可（§5.2）。トークン有効期間の延長やキャッシュ済みセッションの一時許容は、失効の即時性とのトレードオフのためPhase 1では導入せず、02 AR-08の検討事項として残す |
 | RISK-02 | セッショントークン漏えい | 本人になりすましたAPI操作 | `expo-secure-store`保存（平文ストレージに置かない）、全通信TLS必須（NFR-S01）、**ログ・Sentry・エラーレスポンスにトークン／Authorizationヘッダーを出力しない**（マスキングを共通ミドルウェアで実施）、短命JWT（60秒）により漏えい時の悪用可能時間を最小化 |
 | RISK-03 | Webhook署名シークレット漏えい | 偽の`user.deleted`等により退会処理を強制される | 署名検証の必須化（§8）、シークレットのローテーション（§10.2）、`webhook_events`とステータスガードで再送・重複を排除 |
 | RISK-04 | admin権限の誤付与・乗っ取り | 管理API経由での全ユーザー操作 | 付与はClerkダッシュボードの手動操作のみ（BD-04）、ダッシュボードアカウントの2FA有効化、admin APIの操作ログをLogpushで保全 |
-| RISK-05 | **iOS版でSign in with Appleを併設していない（既知の要対応事項）** | サードパーティのソーシャルログイン（Google）のみを提供した状態でiOSアプリをApp Storeへ申請すると、App Store審査ガイドライン**4.8 Login Services**への抵触によりリジェクトされる可能性が高い。開発終盤で発覚すると申請スケジュールに直結する | Phase 1の実装スコープは「Googleのみ」で確定するが、これは未対応のまま進めてよいという判断ではない。**iOS版のストア申請より前に、ClerkのApple OAuth連携を有効化し、Googleと同等の視認性・操作性で「Sign in with Apple」ボタンを併設するタスクを必ず実施する。** 対応時期・実装詳細は§12「拡張方針」を参照。担当者はプロジェクト計画（申請スケジュール）にこのタスクを明示的に組み込むこと |
+| RISK-05 | 【**解消済み**】iOS版でSign in with Appleを併設していない（旧リスク。v1.1で計上） | （旧リスク）サードパーティのソーシャルログイン（Google）のみを提供した状態でiOSアプリをApp Storeへ申請すると、App Store審査ガイドライン**4.8 Login Services**への抵触によりリジェクトされる可能性が高かった。開発終盤で発覚すると申請スケジュールに直結する懸念があった | **v1.2（本改訂・BD-02再改訂）によりPhase 1からSign in with Appleを実装し、Googleと同等の位置づけで併設することとしたため解消。** 詳細は§2.3・§3。iOSで両ボタンを同等以上の視認性・操作性で提供する要件は05画面設計書 SCR-01で担保する |
 
 ---
 
@@ -399,12 +408,11 @@ ClerkのWebhook（`user.created` / `user.deleted`）はSvix経由で配信され
 
 | 対象 | 方針 |
 | --- | --- |
-| Sign in with Apple | **iOS版のApp Store申請前に対応が必須の既知事項（§11 RISK-05）。** ClerkでApple OAuth連携を有効化し、Googleログインボタンと同等の視認性・順序で併設する（App Store審査ガイドライン4.8 Login Services対応）。`profiles`は`clerk_user_id`基準のため、DB側の変更は不要。トークン検証（§5）・認可（§7）にも影響しない |
-| Google以外のソーシャルログイン追加 | Clerkダッシュボードでの有効化のみで追加できる（`profiles`は`clerk_user_id`基準のため変更不要）。iOSでの提供にあたっては、追加後も引き続きSign in with Appleの併設（上記）が必要である点は変わらない |
-| パスワード／パスキー／メールOTPの復活検討 | Googleアカウントを持たない・使いたくないユーザーの救済手段として、需要が顕在化した場合に検討する。Clerk側の有効化のみで追加でき、認証手段が増えてもトークン検証（§5）・認可（§7）は変更不要。復活する場合も認証情報はClerkのみが保持する方針（NFR-S02）は維持する |
+| Google・Apple以外のソーシャルログイン追加 | Clerkダッシュボードでの有効化のみで追加できる（`profiles`は`clerk_user_id`基準のため変更不要）。Phase 1でGoogle・Appleの2プロバイダを提供済み（§2.3。旧RISK-05は解消・§11）のため、今後追加を検討する場合はそれ以外のプロバイダ（例: LINE等）が対象となる。追加後も、iOSでは各ボタンを同等の視認性・操作性で提供する方針（05 SCR-01）を維持する |
+| パスワード／パスキー／メールOTPの復活検討 | Google・Appleいずれのアカウントも持たない・使いたくないユーザーの救済手段として、需要が顕在化した場合に検討する。Clerk側の有効化のみで追加でき、認証手段が増えてもトークン検証（§5）・認可（§7）は変更不要。復活する場合も認証情報はClerkのみが保持する方針（NFR-S02）は維持する |
 | 管理画面 | Phase 1は管理APIのみ（BD-04）。管理画面（Web）を作る場合は同一Clerkインスタンスを用い、`role='admin'`のユーザーのみアクセス可能とする。加えてCloudflare Accessによるネットワーク層の二重防御を検討する |
 | 停止アカウントの精緻化 | suspended中の許可範囲（場所帳の閲覧可否等）を運用実績に応じて再定義する。変更時は§7.3と07 §4を同時改訂する |
 
 ---
 
-*本書はドラフトであり、基本設計工程で内容を精緻化する。Clerkの既定値（トークン有効期間・Google OAuthのリダイレクトURI設定等）は実装着手時に最新仕様を再確認すること。*
+*本書はドラフトであり、基本設計工程で内容を精緻化する。Clerkの既定値（トークン有効期間・Google／Apple OAuthのリダイレクトURI設定等）は実装着手時に最新仕様を再確認すること。*

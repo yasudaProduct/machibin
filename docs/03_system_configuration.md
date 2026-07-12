@@ -11,6 +11,7 @@
 | --- | --- | --- | --- |
 | 1.0 | 2026-07-12 | Claude | 初版作成 |
 | 1.1 | 2026-07-12 | Claude | BD-01改訂（即時配達方式）・BD-02改訂（Googleソーシャルログインのみ）を反映し、Cron Triggers構成・Resendの位置づけを更新 |
+| 1.2 | 2026-07-12 | Claude | BD-02再改訂（Appleソーシャルログインを追加）を反映 |
 
 ## 文書情報
 
@@ -68,7 +69,7 @@ flowchart TB
 | Clerk | 双方向 | 認証UI・トークン発行（アプリ）、JWT検証・ユーザー削除・Webhook受信（API） |
 | Neon | → | 全永続データの読み書き（HTTPドライバ） |
 | Expo Push | → | プッシュ通知の配信依頼 |
-| Resend | → | 将来のトランザクションメール送信用に予約（Phase 1は認証をGoogleソーシャルログインのみとするため未使用） |
+| Resend | → | 将来のトランザクションメール送信用に予約（Phase 1は認証をGoogle・Appleのソーシャルログインのみとするため未使用） |
 | ストア | → | アプリ配信、EAS UpdateによるOTA更新 |
 
 ---
@@ -146,7 +147,7 @@ flowchart TB
 | Cloudflare | Rate Limiting ルール | — | 07 §1.5の制限値 |
 | Neon | プロジェクト | `machibin` | 本番=mainブランチ。PostGIS拡張有効化 |
 | Clerk | アプリケーション | `machibin` | Development/Productionの2インスタンス |
-| Resend | ドメイン | `machibin.app`（仮） | 将来のトランザクションメール送信元（SPF/DKIM設定）。Phase 1は認証をGoogleソーシャルログインのみとするため未使用 |
+| Resend | ドメイン | `machibin.app`（仮） | 将来のトランザクションメール送信元（SPF/DKIM設定）。Phase 1は認証をGoogle・Appleのソーシャルログインのみとするため未使用 |
 | Expo | EASプロジェクト | `machibin` | ビルド・ストア申請・OTA更新・Push |
 | Sentry | プロジェクト2種 | `machibin-app` / `machibin-api` | クラッシュ・例外収集 |
 | GitHub | リポジトリ | `yasudaProduct/machibin` | ソース管理・GitHub Actions |
