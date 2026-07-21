@@ -11,6 +11,7 @@
 | --- | --- | --- | --- |
 | 1.0 | 2026-07-12 | Claude | 初版作成 |
 | 1.1 | 2026-07-12 | Claude | BD-01改訂(即時配達方式)を反映し、API-20/API-30のレスポンス仕様を更新 |
+| 1.2 | 2026-07-22 | Claude | idempotencyKeyの永続化・再現方法を定めた06 §6.4への参照を追加 |
 
 ## 文書情報
 
@@ -219,7 +220,7 @@ Clerkのイベント（`user.created` / `user.deleted`）を受信する。Svix�
 | categoryCode | CD-01のいずれか |
 | comment | PRM-01（20文字）〜PRM-02（300文字） |
 | turnstileToken | Cloudflare Turnstile検証（NFR-S03） |
-| idempotencyKey | 任意。同一キーの再送は初回結果を返す（通信リトライでの二重投函防止） |
+| idempotencyKey | 任意。同一キーの再送は初回結果を返す（通信リトライでの二重投函防止。永続化・再現方法は06 §6.4） |
 
 ```json
 // 201（在庫十分。抽選成立し同一トランザクション内で配達まで完了）

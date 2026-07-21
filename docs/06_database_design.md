@@ -11,6 +11,7 @@
 | --- | --- | --- | --- |
 | 1.0 | 2026-07-12 | Claude | 初版作成 |
 | 1.1 | 2026-07-12 | Claude | BD-01改訂（即時配達方式）を反映し、exchangesの状態遷移・deliver_at/delivered_atの意味を更新 |
+| 1.2 | 2026-07-22 | Claude | exchangesに`idempotency_key`を追加し、API-20の冪等性（同一キー再送は初回結果を返す。07 API-20、04 §4.3）を実現する永続化設計を追加（12 §11.2の既知課題を解消） |
 
 ## 文書情報
 
@@ -199,9 +200,11 @@ Clerkが管理する認証ユーザーに1:1で対応する、アプリ固有の
 | deliver_at | timestamptz | NULL | — | 配達確定時刻。在庫十分なら投函とほぼ同時、在庫不足なら再抽選成立時に確定する（BD-01）。Phase 1では常に`delivered_at`と同値 |
 | delivered_at | timestamptz | NULL | — | 配達確定時刻（実績）。Phase 1では`deliver_at`と常に同値。Phase 2で距離連動の可変遅延配達（FR-05）を導入した場合、両者は分離し得る |
 | created_at | timestamptz | NOT NULL | now() | 投函受理日時 |
+| idempotency_key | varchar(100) | NULL | — | クライアント生成の冪等性キー（07 API-20の`idempotencyKey`）。同一`(recipient_user_id, idempotency_key)`での再送は新規作成せず初回結果を返す（§6.4）。キー未指定の投函はNULLのまま（冪等性制御の対象外） |
 
 - UNIQUE: `trigger_spot_id`（1投函=1交換）
 - UNIQUE（部分）: `(recipient_user_id, delivered_spot_id) WHERE delivered_spot_id IS NOT NULL`（同一スポットの再受信防止。FR-04）
+- UNIQUE（部分）: `(recipient_user_id, idempotency_key) WHERE idempotency_key IS NOT NULL`（同一キーでの二重作成防止。IX-15、§6.4）
 
 **状態遷移**
 
@@ -422,6 +425,7 @@ stateDiagram-v2
 | IX-12 | reports | `(status, created_at)` | 運営の未対応一覧 |
 | IX-13 | notification_logs | `(status, created_at)` | レシート確認ジョブ（JOB-03） |
 | IX-14 | device_tokens | `(user_id) WHERE disabled_at IS NULL` | 有効トークンの取得 |
+| IX-15 | exchanges | UNIQUE `(recipient_user_id, idempotency_key) WHERE idempotency_key IS NOT NULL` | idempotencyKeyでの初回結果参照（§6.4）、同時再送時の二重作成防止 |
 
 ---
 
@@ -474,6 +478,41 @@ JOIN spots s ON s.id = e.delivered_spot_id
 WHERE s.author_user_id = :user_id
   AND r.type = 'visited';
 ```
+
+### 6.4 投函APIの冪等性制御（idempotencyKey。07 API-20、04 §4.3）
+
+モバイル環境では、サーバー側の投函処理は成功したが応答がクライアントに届く前に通信が切断され、クライアントが同一リクエストを自動再送する、という状況が起こり得る。`idempotencyKey`（クライアントが1回の投函操作ごとに生成するUUID等）により、**同一キーでの再送はDBへ書き込みを行わず、初回の結果をそのまま返す**ことで二重投函を防ぐ（TBL-04 `idempotency_key`、IX-15）。
+
+**処理順序（API-20トランザクションの先頭で実行）**
+
+1. リクエストに`idempotencyKey`が含まれる場合、まず既存の交換を確認する。
+
+   ```sql
+   SELECT
+     e.id            AS exchange_id,
+     e.status,
+     e.delivered_at,
+     s.id            AS spot_id,
+     s.name          AS spot_name,
+     s.category_code,
+     ci.id           AS collection_item_id
+   FROM exchanges e
+   JOIN spots s ON s.id = e.trigger_spot_id
+   LEFT JOIN collection_items ci ON ci.exchange_id = e.id
+   WHERE e.recipient_user_id = :recipient_id
+     AND e.idempotency_key = :idempotency_key;
+   ```
+
+2. **該当行が見つかった場合**（既に処理済みのキー）: 新規のspots/exchanges作成は一切行わず、取得した行から07 API-20のレスポンス（`spot` / `exchange` / `collectionItemId`）を再構成して返す。`status='pending'`の行がヒットした場合は`collection_item_id`がNULLのままであり、07の「在庫不足」レスポンス形（`deliveredAt`・`collectionItemId`を含まない形）に合わせて出力する。
+3. **該当行が見つからない場合**（初回、またはキー未指定）: 通常どおり`spots`作成・交換抽選（§6.1）・（該当すれば）配達確定を同一トランザクション内で実行し、`exchanges`作成時に`idempotency_key`へリクエストの値（NULL可）を設定する。
+
+**同時再送（レース）への対処**
+
+ネットワーク遅延により、同一キーを持つリクエストがほぼ同時に2本到達し、いずれも手順1で「該当行なし」と判定してしまう場合がある。この場合、2本目のトランザクションが`exchanges`をINSERTする際にIX-15のUNIQUE制約違反となる。アプリケーションはこの一意制約違反を捕捉し、**エラーとせず手順1のSELECTを再実行して1本目の結果を返す**（08 §5.2で`collection_items.exchange_id`のUNIQUE＋`ON CONFLICT DO NOTHING`により二重生成を防いでいるのと同様の考え方。ただし本ケースは「無視」ではなく「先着結果の返却」が必要なため、UPSERTではなく一意制約違反の捕捉＋再SELECTで実装する）。
+
+**保持期間**
+
+`idempotency_key`にTTLは設けない。`exchanges`行自体が退会時の`cancelled`化以外では削除されない永続的な業務データであるため、キーを個別に失効させる積極的な理由がなく、期限切れ後の扱い（再送を新規操作として扱ってよいか）を新たに定義する複雑さも避けられる。クライアントはUUID等の一意性が保証される値を1回の投函操作ごとに生成する前提であり、異なる操作で同一キーが偶発的に再利用される可能性は無視できる。
 
 ---
 
