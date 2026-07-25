@@ -1,4 +1,10 @@
 packages:
-  - "apps/*"
-  - "packages/*"
-  - "tools/*"
+  - 'apps/*'
+  - 'packages/*'
+  - 'tools/*'
+
+# pnpm 10はビルドスクリプトを既定でブロックする。動作に必要なもののみ明示的に許可する。
+onlyBuiltDependencies:
+  - esbuild
+  - unrs-resolver
+  - workerd

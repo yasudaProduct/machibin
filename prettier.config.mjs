@@ -1,1 +1,1 @@
-export { default } from "@machibin/config/prettier";
+export { default } from '@machibin/config/prettier';
