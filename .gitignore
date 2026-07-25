@@ -1,0 +1,29 @@
+# dependencies
+node_modules/
+
+# build outputs
+dist/
+build/
+coverage/
+
+# Expo
+.expo/
+expo-env.d.ts
+# CNG（prebuild）成果物。M2でのdevelopment build移行時に扱いをADRで判断する
+apps/mobile/ios/
+apps/mobile/android/
+
+# Cloudflare Workers
+.wrangler/
+
+# 生成物（12 §6.4。コミット禁止）
+openapi.json
+
+# env（.env.exampleのみ管理する）
+.env
+.env.*
+!.env.example
+
+# logs / OS
+*.log
+.DS_Store

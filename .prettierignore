@@ -1,0 +1,12 @@
+node_modules
+pnpm-lock.yaml
+dist
+build
+coverage
+.expo
+.wrangler
+apps/mobile/ios
+apps/mobile/android
+
+# ドキュメントはPrettierの整形対象外（表・Mermaidの体裁を維持する）
+*.md

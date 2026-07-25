@@ -1,0 +1,23 @@
+{
+  "name": "@machibin/schema",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@machibin/config": "workspace:*",
+    "eslint": "^9.32.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}
