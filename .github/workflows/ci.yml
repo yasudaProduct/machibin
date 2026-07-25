@@ -38,4 +38,5 @@ jobs:
         run: pnpm --filter @machibin/schema --filter @machibin/api test
 
       - name: test:mobile (jest-expo / L1')
-        run: pnpm --filter @machibin/mobile test -- --ci
+        # CI環境変数（GitHub Actionsが自動設定）によりjestは非対話モードで動作する
+        run: pnpm --filter @machibin/mobile test
