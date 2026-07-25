@@ -12,6 +12,7 @@
 | 1.0 | 2026-07-12 | Claude | 初版作成 |
 | 1.1 | 2026-07-12 | Claude | BD-01改訂（即時配達方式）を反映し、exchangesの状態遷移・deliver_at/delivered_atの意味を更新 |
 | 1.2 | 2026-07-22 | Claude | exchangesに`idempotency_key`を追加し、API-20の冪等性（同一キー再送は初回結果を返す。07 API-20、04 §4.3）を実現する永続化設計を追加（12 §11.2の既知課題を解消） |
+| 1.3 | 2026-07-25 | Claude | §7.1.1を新設し、退会時のFK宣言（ON DELETE CASCADE/SET NULL）がprofiles/spotsの論理削除設計では発火しない問題を修正。明示的DELETE文とAPI-41判定ロジックの修正方針を明記 |
 
 ## 文書情報
 
@@ -522,14 +523,33 @@ WHERE s.author_user_id = :user_id
 
 | データ | 処理 |
 | --- | --- |
-| profiles | nickname・bio・home_area_*をNULL化し `status='withdrawn'`、`withdrawn_at` 設定。clerk_user_idは削除完了後に `deleted:<元ID>` 形式へ置換 |
-| spots（本人投稿） | `status='deleted'`（プールから除外）、`author_user_id` をNULL化 |
+| profiles | nickname・bio・home_area_*をNULL化し `status='withdrawn'`、`withdrawn_at` 設定（**行自体は物理削除しない**。§7.1.1） |
+| spots（本人投稿） | `status='deleted'`（プールから除外）、`author_user_id` をNULL化（**行自体は物理削除しない**。§7.1.1） |
 | exchanges（未配達） | pending/scheduledの交換は `cancelled` へ更新（終端。CD-03） |
-| collection_items（本人所有） | 物理削除（CASCADE） |
+| collection_items（本人所有） | 物理削除。**アプリケーションが明示的にDELETEを実行する**（§7.1.1） |
 | collection_items（他者所有・本人投稿由来） | スナップショットのためそのまま残置（差出人参照を持たない） |
-| device_tokens / notification_logs | 物理削除（CASCADE） |
+| device_tokens / notification_logs | 物理削除。**アプリケーションが明示的にDELETEを実行する**（§7.1.1） |
 | reactions（本人が付与） | 残置（匿名化済みプロフィールを参照したまま保持。受信・交換記録の一部として扱う） |
 | reports / blocks | 保全のため残置（不正対策の履歴として保持。11 プライバシー設計書 §5） |
+
+#### 7.1.1 物理削除の実現方法（重要・実装上の注意）
+
+**上表の「物理削除」は、FK宣言の`ON DELETE CASCADE`/`ON DELETE SET NULL`によっては実現されない。** これらのアクションは参照先の**行が実際にDELETEされたとき**にのみ発火するが、本設計ではprofiles・spotsのいずれも退会時に行を削除せず、`status`変更＋一部カラムのNULL化のみで**行は残置**する（上表のとおり）。したがって：
+
+- `device_tokens.user_id`・`notification_logs.user_id`・`collection_items.user_id`に宣言された`ON DELETE CASCADE`（TBL-02・TBL-05・TBL-10）は、profilesの行が存在し続ける限り**永久に発火しない**。
+- `collection_items.spot_id`に宣言された`ON DELETE SET NULL`（TBL-05）も同様に、spotsの行が存在し続ける限り**発火しない**（`spot_id`は`status='deleted'`後も原本行のIDを指したままになる）。
+
+これらのFK宣言自体は、将来的にprofiles/spotsを物理削除する経路（バックアップ保持期間経過後の完全パージ等）が追加された場合の安全策として**そのまま残す**が、Phase 1の退会処理（10 §6.2のトランザクション）は、上表の物理削除対象について**明示的なDELETE文を発行する**必要がある。
+
+```sql
+-- 10 §6.2「(1) 単一トランザクションで匿名化・削除」に含める
+DELETE FROM device_tokens WHERE user_id = :profile_id;
+DELETE FROM notification_logs WHERE user_id = :profile_id;
+DELETE FROM collection_items WHERE user_id = :profile_id;
+-- profiles・spotsは上表のとおりUPDATEのみ（行は残す）
+```
+
+**API-41の`spotId`/`reportable`判定への影響:** 07 API-41は「原本が削除済みの場合は`spotId`がnull」としているが、上記のとおり`collection_items.spot_id`は退会・削除後も**NULLにならず、原本行のIDを指したまま**である（原本行自体は`status='deleted'`または`'hidden'`で残っているため）。実装では`spot_id IS NULL`ではなく、**`spots.status`を`collection_items.spot_id`でJOINして判定する**（`status IN ('deleted','hidden')`なら原本参照不可として扱う）。`spot_id`がNULLになるのは、将来spotsが物理削除される経路が追加された場合の保険としてのみ機能する。
 
 ### 7.2 保持期間（TTL）
 

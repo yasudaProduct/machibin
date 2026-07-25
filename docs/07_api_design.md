@@ -12,6 +12,7 @@
 | 1.0 | 2026-07-12 | Claude | 初版作成 |
 | 1.1 | 2026-07-12 | Claude | BD-01改訂(即時配達方式)を反映し、API-20/API-30のレスポンス仕様を更新 |
 | 1.2 | 2026-07-22 | Claude | idempotencyKeyの永続化・再現方法を定めた06 §6.4への参照を追加 |
+| 1.3 | 2026-07-25 | Claude | API-10にsuspended検知用の`status`フィールドを追加。API-41の`spotId`/`reportable`判定ロジックを06 §7.1.1の修正（物理削除されない設計）に整合させて修正 |
 
 ## 文書情報
 
@@ -130,6 +131,7 @@ Clerkのイベント（`user.created` / `user.deleted`）を受信する。Svix�
 // 200
 {
   "id": "uuid",
+  "status": "active",
   "nickname": "ゆうた",
   "avatarId": 3,
   "homeArea": { "code": "13106", "label": "東京都台東区" },
@@ -140,6 +142,7 @@ Clerkのイベント（`user.created` / `user.deleted`）を受信する。Svix�
 }
 ```
 
+- `status`: `profiles.status`（CD-06。active / suspended）。**suspendedユーザーもAPI-10自体は200で成功する**（10 §7.2）ため、クライアントはこのフィールドでsuspended状態を検知し、SCR-12（アカウント停止画面）へ遷移する（05 §3.3 G-02）。`withdrawn`は本APIに到達する前に401となるため（10 §5.1手順6）、本フィールドに現れることはない。
 - `onboardingCompleted`: nickname設定・年齢確認・規約同意がすべて完了しているか（SCR-10の表示判定に使用）。
 - `visitedCount`: 自分の投稿が「行ってきた」された累計（FR-07。本人のみ閲覧可）。
 
@@ -332,7 +335,7 @@ Clerkのイベント（`user.created` / `user.deleted`）を受信する。Svix�
 ```
 
 - `senderAreaLabel` は市区町村レベルのみ（NFR-PR02）。差出人のニックネーム等は返さない。
-- `spotId` は原本スポットへの参照で、通報（API-50）の `targetId` に使用する。原本が削除済みの場合はnull。`reportable` は原本が存在し通報可能な場合のみtrue（falseの場合、画面は通報導線を出さない）。
+- `spotId` は原本スポットへの参照で、通報（API-50）の `targetId` に使用する。**Phase 1では原本の`spots`行が物理削除されることはなく、投稿者の退会後・運営非表示後も行自体は残る（`status`が変わるのみ。06 §7.1.1）ため、`spotId`は通常nullにならない。** `reportable` は `spots.status = 'active'` の場合のみtrueとする（`hidden`・`deleted`の場合はfalse。falseの場合、画面は通報導線を出さない）。`spotId`がnullになるのは、将来spotsの物理削除経路が追加された場合のみである。
 
 ### API-42 PATCH /collection/{id}
 
