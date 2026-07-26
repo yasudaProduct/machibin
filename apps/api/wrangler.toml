@@ -1,0 +1,24 @@
+# machibin API（Cloudflare Workers + Hono）。03 §3.1 / 12 §3.1
+# シークレットはWrangler Secretsで管理し、本ファイルへ記載しない（10 §10、14 §13）。
+name = "machibin-api"
+main = "src/index.ts"
+compatibility_date = "2026-07-01"
+
+[vars]
+ENVIRONMENT = "dev"
+
+# Cron Triggers（JOB-02/03/04。08 §2.1）はM1のジョブ実装時に有効化する。
+# [triggers]
+# crons = ["*/5 * * * *", "*/15 * * * *", "0 17 * * *"]
+
+[env.staging]
+name = "machibin-api-staging"
+
+[env.staging.vars]
+ENVIRONMENT = "staging"
+
+[env.production]
+name = "machibin-api"
+
+[env.production.vars]
+ENVIRONMENT = "production"

@@ -1,0 +1,42 @@
+# PR必須チェック（12 §9）。test:api（L2。Neonテストブランチ）はM1で追加する。
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [develop]
+
+env:
+  EXPO_NO_TELEMETRY: '1'
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4 # packageManagerフィールドのバージョンを使用
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+
+      - name: install
+        run: pnpm install --frozen-lockfile
+
+      - name: format:check
+        run: pnpm format:check
+
+      - name: lint
+        run: pnpm -r lint
+
+      - name: typecheck
+        run: pnpm -r typecheck
+
+      - name: test:unit (Vitest / L1)
+        run: pnpm --filter @machibin/schema --filter @machibin/api test
+
+      - name: test:mobile (jest-expo / L1')
+        # CI環境変数（GitHub Actionsが自動設定）によりjestは非対話モードで動作する
+        run: pnpm --filter @machibin/mobile test

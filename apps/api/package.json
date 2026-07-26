@@ -1,0 +1,23 @@
+{
+  "name": "@machibin/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@machibin/schema": "workspace:*",
+    "hono": "^4.8.0"
+  },
+  "devDependencies": {
+    "@machibin/config": "workspace:*",
+    "eslint": "^9.32.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0",
+    "wrangler": "^4.26.0"
+  }
+}

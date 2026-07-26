@@ -1,0 +1,11 @@
+{
+  "name": "@machibin/tiles-tools",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint": "echo 'skip (stub until M3)'",
+    "typecheck": "echo 'skip (stub until M3)'",
+    "test": "echo 'skip (stub until M3)'"
+  }
+}

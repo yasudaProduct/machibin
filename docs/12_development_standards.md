@@ -12,6 +12,7 @@
 | 1.0 | 2026-07-21 | Claude | 初版作成 |
 | 1.1 | 2026-07-21 | Claude | §11.2の通知許可タイミング矛盾を解消（05を09に統一）につき、当該行を既知の設計課題から削除 |
 | 1.2 | 2026-07-22 | Claude | §11.2のidempotencyKey永続化設計を解消（06 §6.4に定義）につき、当該行を既知の設計課題から削除 |
+| 1.3 | 2026-07-26 | Claude | §9のPR必須チェック表へtest:mobile（L1'）を追加（13 §8との整合）。§2のpnpmを10系へ更新（M0実装時の実環境に合わせた） |
 
 ## 文書情報
 
@@ -43,7 +44,7 @@
 | 区分 | 採用 | 備考 |
 | --- | --- | --- |
 | ランタイム | Node.js 22（LTS） | `package.json` の `engines` と `.node-version` で固定 |
-| パッケージマネージャ | pnpm 9系（corepack） | `packageManager` フィールドで固定。ワークスペース機能を使用 |
+| パッケージマネージャ | pnpm 10系（corepack） | `packageManager` フィールドで固定。ワークスペース機能を使用 |
 | 言語 | TypeScript 5系（strict） | 全パッケージ共通。JSの追加は不可 |
 | モバイル | Expo SDK（実装着手時の最新安定版） | BD-05のOS下限（iOS 15.1 / Android 7.0）を満たすことをアップデート毎に確認 |
 | API | Hono 4系 ＋ wrangler 4系 | 02 §3.1 |
@@ -251,7 +252,8 @@ PRで必須となるチェックは以下とする（ワークフロー定義の
 | lint | ESLint＋Prettier（`--check`） |
 | typecheck | 全パッケージ `tsc --noEmit` |
 | test:unit | Vitest（L1。13 §3） |
-| test:api | API結合テスト（L2。PRごとのNeonテストブランチ。13 §4.1） |
+| test:mobile | jest-expo＋React Native Testing Library（L1'。13 §2.1） |
+| test:api | API結合テスト（L2。PRごとのNeonテストブランチ。13 §4.1。M1で追加） |
 
 ---
 
